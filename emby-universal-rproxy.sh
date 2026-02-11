@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # emby-universal-rproxy.sh
 # Universal reverse proxy gateway for Emby-like services.
-# Client usage:
-#   https://YOUR_DOMAIN/<upstream_host:port>/
-#   https://YOUR_DOMAIN/https/<upstream_host:port>/
-#   https://YOUR_DOMAIN/http/<upstream_host:port>/
 #
-# IMPORTANT: Enable BasicAuth and/or IP allowlist, otherwise this is an open proxy.
+# Client usage (examples):
+#   https://YOUR_DOMAIN/plus.younoyes.com:443
+#   https://YOUR_DOMAIN/https/plus.younoyes.com:443
+#   https://YOUR_DOMAIN/http/1.2.3.4:8096
 #
-# Debian-friendly. Only manages /etc/nginx/{sites-available,sites-enabled} and a map file in /etc/nginx/conf.d/.
-# Does NOT overwrite /etc/nginx/nginx.conf (to avoid QUIC/http3 directive incompatibility).
-
+# SECURITY WARNING:
+#   If you disable BOTH BasicAuth and IP allowlist, you are running an OPEN PROXY.
+#   Do not expose this publicly.
+#
+# This script:
+#   - manages one nginx site under /etc/nginx/sites-{available,enabled}
+#   - writes a map file under /etc/nginx/conf.d (loaded inside http{})
+#   - writes a locations snippet under /etc/nginx/snippets (included inside server{})
+#   - does NOT overwrite /etc/nginx/nginx.conf (avoids QUIC/http3 directive incompatibility)
+#
 set -euo pipefail
 
 SITES_AVAIL="/etc/nginx/sites-available"
@@ -66,15 +72,8 @@ ensure_deps() {
   apt_install nginx curl ca-certificates rsync apache2-utils openssl
 }
 
-
 ensure_certbot() {
   apt_install certbot python3-certbot-nginx
-}
-
-ensure_htpasswd() {
-  if ! has_cmd htpasswd; then
-    apt_install apache2-utils
-  fi
 }
 
 backup_nginx() {
@@ -144,16 +143,21 @@ enabled_path_for_domain() {
 }
 
 random_pass() {
-  # 20 chars (hex), no SIGPIPE issues under pipefail
   openssl rand -hex 10 2>/dev/null
+}
+
+ensure_htpasswd_cmd() {
+  if ! has_cmd htpasswd; then
+    echo "htpasswd not found. Installing apache2-utils..."
+    apt_install apache2-utils
+  fi
 }
 
 write_map_conf() {
   mkdir -p /etc/nginx/conf.d
-  cat > "$MAP_CONF" <<'EOL'
+  cat > "$MAP_CONF" <<'EOF'
 # Managed by emby-universal-rproxy
-# This file is included under http{} via /etc/nginx/conf.d/*.conf.
-# Do NOT include "map" inside server/location snippets.
+# Loaded under http{} via /etc/nginx/conf.d/*.conf
 
 # WebSocket upgrade helper
 map $http_upgrade $connection_upgrade {
@@ -163,13 +167,11 @@ map $http_upgrade $connection_upgrade {
 
 # Extract upstream host (no port) for Host header to avoid 421 on CF-backed origins.
 map $up_target $up_host_only {
-    default                                $up_target;
-    ~^\[(?<h>[A-Fa-f0-9:.]+)\](:\d+)?$   [$h];
-    ~^(?<h>[^:]+)(:\d+)?$                  $h;
+  default                                $up_target;
+  ~^\[(?<h>[A-Fa-f0-9:.]+)\](:\d+)?$     [$h];
+  ~^(?<h>[^:]+)(:\d+)?$                  $h;
 }
-EOL
-}
-EOL
+EOF
 }
 
 write_locations_snippet() {
@@ -179,13 +181,11 @@ write_locations_snippet() {
 
   mkdir -p /etc/nginx/snippets
 
-  # Build auth snippet
   local auth_snip=""
   if [[ "$enable_basicauth" == "y" ]]; then
     auth_snip=$'    auth_basic "Restricted";\n    auth_basic_user_file /etc/nginx/.htpasswd-emby-gw;\n'
   fi
 
-  # Build allowlist snippet
   local allow_snip=""
   if [[ "$enable_ip_whitelist" == "y" ]]; then
     local csv="${whitelist_csv// /}"
@@ -197,10 +197,10 @@ write_locations_snippet() {
     allow_snip+="    deny all;\n"
   fi
 
-  cat > "$SNIP_CONF" <<'EOL'
+  # Use placeholders then replace safely
+  cat > "$SNIP_CONF" <<'EOF'
 # Managed by emby-universal-rproxy
-# Common proxy settings for Emby (websocket + range + long timeouts)
-# NOTE: Do not put "map" here. This snippet is included inside server{}.
+# Included inside server{} (so NO "map" directives here).
 
 proxy_http_version 1.1;
 
@@ -223,12 +223,12 @@ resolver 127.0.0.1 1.1.1.1 8.8.8.8 valid=60s;
 resolver_timeout 5s;
 
 # /http/<target>/...
-location ~ ^/http/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
+location ~ ^/http/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
     set $up_scheme http;
     if ($up_rest = "") { set $up_rest "/"; }
 
-    # AUTH_SNIP
-    # ALLOW_SNIP
+__AUTH_SNIP__
+__ALLOW_SNIP__
 
     proxy_set_header Host $up_host_only;
     proxy_set_header X-Forwarded-Host $host;
@@ -242,12 +242,12 @@ location ~ ^/http/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
 }
 
 # /https/<target>/...
-location ~ ^/https/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
+location ~ ^/https/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
     set $up_scheme https;
     if ($up_rest = "") { set $up_rest "/"; }
 
-    # AUTH_SNIP
-    # ALLOW_SNIP
+__AUTH_SNIP__
+__ALLOW_SNIP__
 
     proxy_set_header Host $up_host_only;
     proxy_set_header X-Forwarded-Host $host;
@@ -261,12 +261,12 @@ location ~ ^/https/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
 }
 
 # Default: /<target>/... (scheme defaults to https)
-location ~ ^/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
+location ~ ^/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
     set $up_scheme https;
     if ($up_rest = "") { set $up_rest "/"; }
 
-    # AUTH_SNIP
-    # ALLOW_SNIP
+__AUTH_SNIP__
+__ALLOW_SNIP__
 
     proxy_set_header Host $up_host_only;
     proxy_set_header X-Forwarded-Host $host;
@@ -278,9 +278,23 @@ location ~ ^/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
 
     proxy_pass $up_scheme://$up_target$up_rest$is_args$args;
 }
-EOL
+EOF
 
-  perl -0777 -i -pe "s/# AUTH_SNIP/$auth_snip/g; s/# ALLOW_SNIP/$allow_snip/g" "$SNIP_CONF"
+  # Replace placeholders.
+  # If empty, remove the placeholder line entirely.
+  if [[ -n "$auth_snip" ]]; then
+    awk -v repl="$auth_snip" '{gsub(/__AUTH_SNIP__/, repl); print}' "$SNIP_CONF" > "${SNIP_CONF}.tmp"
+  else
+    awk '{gsub(/__AUTH_SNIP__\n?/, ""); print}' "$SNIP_CONF" > "${SNIP_CONF}.tmp"
+  fi
+  mv "${SNIP_CONF}.tmp" "$SNIP_CONF"
+
+  if [[ -n "$allow_snip" ]]; then
+    awk -v repl="$allow_snip" '{gsub(/__ALLOW_SNIP__/, repl); print}' "$SNIP_CONF" > "${SNIP_CONF}.tmp"
+  else
+    awk '{gsub(/__ALLOW_SNIP__\n?/, ""); print}' "$SNIP_CONF" > "${SNIP_CONF}.tmp"
+  fi
+  mv "${SNIP_CONF}.tmp" "$SNIP_CONF"
 }
 
 write_gateway_site_conf() {
@@ -289,7 +303,7 @@ write_gateway_site_conf() {
   local conf; conf="$(conf_path_for_domain "$domain")"
   local enabled; enabled="$(enabled_path_for_domain "$domain")"
 
-  cat > "$conf" <<EOL
+  cat > "$conf" <<EOF
 # ${TOOL_NAME}: Universal Gateway for ${domain}
 # Managed by ${TOOL_NAME}
 
@@ -310,7 +324,7 @@ server {
 
   include /etc/nginx/snippets/emby-gw-locations.conf;
 }
-EOL
+EOF
 
   ln -sf "$conf" "$enabled"
   rm -f "${SITES_ENAB}/default" >/dev/null 2>&1 || true
@@ -319,8 +333,8 @@ EOL
 print_usage() {
   local domain="$1"
   local ssl="$2"
-  local user="$3"
-  local pass="$4"
+  local user="${3:-}"
+  local pass="${4:-}"
 
   local base="http://${domain}"
   [[ "$ssl" == "y" ]] && base="https://${domain}"
@@ -336,21 +350,20 @@ print_usage() {
     echo "BasicAuth enabled:"
     echo "  username: $user"
     echo "  password: $pass"
+    echo "Note: BasicAuth is an extra layer BEFORE the upstream Emby login."
   else
-    echo "WARNING: BasicAuth disabled. Do NOT expose this publicly."
+    echo "WARNING: BasicAuth disabled."
   fi
   echo "==============================="
   echo
 }
 
 action_install_update() {
-  ensure_deps
-
   local DOMAIN ENABLE_SSL EMAIL
   local ENABLE_BASICAUTH BASIC_USER BASIC_PASS
   local ENABLE_IPWL IPWL
 
-  prompt DOMAIN "Gateway domain (e.g. autoemby.example.com; domain only)" 
+  prompt DOMAIN "Gateway domain (e.g. autoemby.example.com; domain only)"
   DOMAIN="$(strip_scheme "$DOMAIN")"
   [[ -n "$DOMAIN" ]] || { echo "Domain cannot be empty"; return 1; }
 
@@ -365,9 +378,6 @@ action_install_update() {
     prompt BASIC_USER "BasicAuth username" "emby"
     BASIC_PASS="$(random_pass)"
     prompt BASIC_PASS "BasicAuth password (empty = auto-generated)" "$BASIC_PASS"
-    ensure_htpasswd
-    ensure_htpasswd
-    htpasswd -bc "$HTPASSWD_PATH" "$BASIC_USER" "$BASIC_PASS" >/dev/null
   fi
 
   yesno ENABLE_IPWL "Enable IP allowlist (optional)" "n"
@@ -375,6 +385,13 @@ action_install_update() {
   if [[ "$ENABLE_IPWL" == "y" ]]; then
     prompt IPWL "Allowlist CSV (e.g. 1.2.3.4/32,5.6.7.8/32)"
     [[ -n "$IPWL" ]] || { echo "Allowlist cannot be empty"; return 1; }
+  fi
+
+  if [[ "$ENABLE_BASICAUTH" == "n" && "$ENABLE_IPWL" == "n" ]]; then
+    echo "WARNING: You disabled both BasicAuth and IP allowlist."
+    echo "This will be an OPEN PROXY. Not recommended."
+    yesno _ok "Continue anyway" "n"
+    [[ "$_ok" == "y" ]] || { echo "Cancelled"; return 0; }
   fi
 
   echo
@@ -386,6 +403,11 @@ action_install_update() {
   echo
 
   ensure_deps
+
+  if [[ "$ENABLE_BASICAUTH" == "y" ]]; then
+    ensure_htpasswd_cmd
+    htpasswd -bc "$HTPASSWD_PATH" "$BASIC_USER" "$BASIC_PASS" >/dev/null
+  fi
 
   local backup dump
   backup="$(backup_nginx)"
@@ -416,7 +438,7 @@ action_install_update() {
   if [[ "$ENABLE_BASICAUTH" == "y" ]]; then
     print_usage "$DOMAIN" "$ENABLE_SSL" "$BASIC_USER" "$BASIC_PASS"
   else
-    print_usage "$DOMAIN" "$ENABLE_SSL" "" ""
+    print_usage "$DOMAIN" "$ENABLE_SSL"
   fi
 }
 
@@ -430,6 +452,7 @@ action_status() {
   echo
   [[ -f "$MAP_CONF" ]] && echo "Map file: $MAP_CONF (exists)" || echo "Map file: $MAP_CONF (missing)"
   [[ -f "$SNIP_CONF" ]] && echo "Snippet:  $SNIP_CONF (exists)" || echo "Snippet:  $SNIP_CONF (missing)"
+  [[ -f "$HTPASSWD_PATH" ]] && echo "htpasswd:  $HTPASSWD_PATH (exists)" || echo "htpasswd:  $HTPASSWD_PATH (missing)"
 }
 
 action_change_auth() {
@@ -440,11 +463,10 @@ action_change_auth() {
     return 1
   fi
   ensure_deps
-  ensure_htpasswd
+  ensure_htpasswd_cmd
   prompt user "New BasicAuth username" "emby"
   pass="$(random_pass)"
   prompt pass "New BasicAuth password (empty = auto-generated)" "$pass"
-  ensure_htpasswd
   htpasswd -bc "$HTPASSWD_PATH" "$user" "$pass" >/dev/null
   reload_nginx
   echo "Updated BasicAuth:"
@@ -495,7 +517,7 @@ menu() {
 
   echo "=== ${TOOL_NAME} (Universal Emby Gateway) ==="
   echo "OS: ${os_name} / ${os_ver} / ${os_code}"
-  echo "Tip: Enable BasicAuth or IP allowlist to avoid open proxy."
+  echo "Tip: Enable BasicAuth and/or IP allowlist to avoid open proxy."
   echo
 
   while true; do
