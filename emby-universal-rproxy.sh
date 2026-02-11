@@ -152,11 +152,22 @@ write_map_conf() {
   mkdir -p /etc/nginx/conf.d
   cat > "$MAP_CONF" <<'EOL'
 # Managed by emby-universal-rproxy
+# This file is included under http{} via /etc/nginx/conf.d/*.conf.
+# Do NOT include "map" inside server/location snippets.
+
+# WebSocket upgrade helper
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ""      close;
+}
+
 # Extract upstream host (no port) for Host header to avoid 421 on CF-backed origins.
 map $up_target $up_host_only {
-    default                              $up_target;
+    default                                $up_target;
     ~^\[(?<h>[A-Fa-f0-9:.]+)\](:\d+)?$   [$h];
-    ~^(?<h>[^:]+)(:\d+)?$                $h;
+    ~^(?<h>[^:]+)(:\d+)?$                  $h;
+}
+EOL
 }
 EOL
 }
@@ -189,31 +200,30 @@ write_locations_snippet() {
   cat > "$SNIP_CONF" <<'EOL'
 # Managed by emby-universal-rproxy
 # Common proxy settings for Emby (websocket + range + long timeouts)
-
-map $http_upgrade $connection_upgrade {
-  default upgrade;
-  ""      close;
-}
+# NOTE: Do not put "map" here. This snippet is included inside server{}.
 
 proxy_http_version 1.1;
+
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;
+
 proxy_set_header Range $http_range;
 proxy_set_header If-Range $http_if_range;
 
 proxy_buffering off;
 proxy_request_buffering off;
+
 proxy_read_timeout 3600s;
 proxy_send_timeout 3600s;
+
 client_max_body_size 500m;
 
 # For variable upstream, Nginx needs a resolver.
-# Prefer local resolver if present; otherwise public resolvers.
 resolver 127.0.0.1 1.1.1.1 8.8.8.8 valid=60s;
 resolver_timeout 5s;
 
 # /http/<target>/...
-location ~ ^/http/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
+location ~ ^/http/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
     set $up_scheme http;
     if ($up_rest = "") { set $up_rest "/"; }
 
@@ -232,7 +242,7 @@ location ~ ^/http/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
 }
 
 # /https/<target>/...
-location ~ ^/https/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
+location ~ ^/https/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
     set $up_scheme https;
     if ($up_rest = "") { set $up_rest "/"; }
 
@@ -250,8 +260,8 @@ location ~ ^/https/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
     proxy_pass $up_scheme://$up_target$up_rest$is_args$args;
 }
 
-# Default: /<target>/...  (scheme defaults to https)
-location ~ ^/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
+# Default: /<target>/... (scheme defaults to https)
+location ~ ^/(?<up_target>[A-Za-z0-9.\-_[\]:]+)(?<up_rest>/.*)?$ {
     set $up_scheme https;
     if ($up_rest = "") { set $up_rest "/"; }
 
@@ -270,8 +280,6 @@ location ~ ^/(?<up_target>[A-Za-z0-9.\-_\[\]:]+)(?<up_rest>/.*)?$ {
 }
 EOL
 
-  # Inject snippets
-  # Use a safe replacement without non-ascii
   perl -0777 -i -pe "s/# AUTH_SNIP/$auth_snip/g; s/# ALLOW_SNIP/$allow_snip/g" "$SNIP_CONF"
 }
 
