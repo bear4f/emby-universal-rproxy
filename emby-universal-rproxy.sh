@@ -3,8 +3,8 @@
 # Universal reverse proxy gateway for Emby-like services.
 #
 # Client usage (examples):
-#   https://YOUR_DOMAIN/plus.younoyes.com:443
-#   https://YOUR_DOMAIN/https/plus.younoyes.com:443
+#   https://YOUR_DOMAIN/embyip:443
+#   https://YOUR_DOMAIN/https/embyip:443
 #   https://YOUR_DOMAIN/http/1.2.3.4:8096
 #
 # SECURITY WARNING:
@@ -342,8 +342,8 @@ print_usage() {
   echo
   echo "==== Universal proxy usage ===="
   echo "Emby server address examples:"
-  echo "  ${base}/plus.younoyes.com:443"
-  echo "  ${base}/https/plus.younoyes.com:443"
+  echo "  ${base}/embyip:443"
+  echo "  ${base}/https/embyip:443"
   echo "  ${base}/http/1.2.3.4:8096"
   echo
   if [[ -n "$user" ]]; then
@@ -542,4 +542,5 @@ menu() {
 
 need_root
 menu
+
 
