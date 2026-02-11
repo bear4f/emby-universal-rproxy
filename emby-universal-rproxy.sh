@@ -62,11 +62,19 @@ apt_install() {
 }
 
 ensure_deps() {
+  # apache2-utils provides htpasswd
   apt_install nginx curl ca-certificates rsync apache2-utils openssl
 }
 
+
 ensure_certbot() {
   apt_install certbot python3-certbot-nginx
+}
+
+ensure_htpasswd() {
+  if ! has_cmd htpasswd; then
+    apt_install apache2-utils
+  fi
 }
 
 backup_nginx() {
@@ -328,6 +336,8 @@ print_usage() {
 }
 
 action_install_update() {
+  ensure_deps
+
   local DOMAIN ENABLE_SSL EMAIL
   local ENABLE_BASICAUTH BASIC_USER BASIC_PASS
   local ENABLE_IPWL IPWL
@@ -347,6 +357,8 @@ action_install_update() {
     prompt BASIC_USER "BasicAuth username" "emby"
     BASIC_PASS="$(random_pass)"
     prompt BASIC_PASS "BasicAuth password (empty = auto-generated)" "$BASIC_PASS"
+    ensure_htpasswd
+    ensure_htpasswd
     htpasswd -bc "$HTPASSWD_PATH" "$BASIC_USER" "$BASIC_PASS" >/dev/null
   fi
 
@@ -419,9 +431,12 @@ action_change_auth() {
     echo "Enable BasicAuth via Install/Update first."
     return 1
   fi
+  ensure_deps
+  ensure_htpasswd
   prompt user "New BasicAuth username" "emby"
   pass="$(random_pass)"
   prompt pass "New BasicAuth password (empty = auto-generated)" "$pass"
+  ensure_htpasswd
   htpasswd -bc "$HTPASSWD_PATH" "$user" "$pass" >/dev/null
   reload_nginx
   echo "Updated BasicAuth:"
