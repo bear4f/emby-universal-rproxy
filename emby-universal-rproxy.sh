@@ -24,7 +24,7 @@ BACKUP_ROOT="/root"
 TOOL_NAME="emby-universal-rproxy"
 # ------------------------------------------------
 
-need_root() { [[ "${EUID}" -eq 0 ]] || { echo "请用 root 运行：sudo bash $0"; exit 1; }; }
+need_root() { [[ "${EUID}" -eq 0 ]] || { echo "è¯·ç¨ root è¿è¡ï¼sudo bash $0"; exit 1; }; }
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 prompt() {
@@ -82,7 +82,7 @@ apt_install() {
 }
 
 ensure_deps() {
-  apt_install nginx curl ca-certificates rsync apache2-utils
+  apt_install nginx curl ca-certificates rsync apache2-utils openssl
 }
 
 ensure_certbot() {
@@ -123,12 +123,12 @@ apply_with_rollback() {
   local rc=$?
   set -e
   if [[ $rc -ne 0 ]]; then
-    echo "❌ nginx 校验失败（nginx -t/-T），开始回滚..."
-    echo "---- nginx -T 输出（含错误）已保存：$dumpfile ----"
+    echo "â nginx æ ¡éªå¤±è´¥ï¼nginx -t/-Tï¼ï¼å¼å§åæ»..."
+    echo "---- nginx -T è¾åºï¼å«éè¯¯ï¼å·²ä¿å­ï¼$dumpfile ----"
     restore_nginx "$backup_dir"
     nginx -t >/dev/null 2>&1 || true
     reload_nginx
-    echo "✅ 已回滚并恢复 Nginx。"
+    echo "â å·²åæ»å¹¶æ¢å¤ Nginxã"
     return 1
   fi
 
@@ -158,8 +158,13 @@ enabled_path_for_domain() {
 }
 
 random_pass() {
-  # 20 chars
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20
+  # 20 chars, avoid pipefail+SIGPIPE issues
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 10 2>/dev/null
+  else
+    # fallback: date+pid+random (not crypto-strong but avoids SIGPIPE)
+    echo "$(date +%s)$$$RANDOM$RANDOM" | sha256sum | awk '{print $1}' | cut -c1-20
+  fi
 }
 
 write_map_conf() {
@@ -205,7 +210,7 @@ write_gateway_site_conf() {
     # whitelist_csv: "1.2.3.4/32,5.6.7.8/32"
     local csv="${whitelist_csv// /}"
     IFS=',' read -r -a arr <<<"$csv"
-    allow_snip="        # IP 白名单（可选）\n"
+    allow_snip="        # IP ç½ååï¼å¯éï¼\n"
     for cidr in "${arr[@]}"; do
       [[ -z "$cidr" ]] && continue
       allow_snip+="        allow ${cidr};\n"
@@ -371,26 +376,26 @@ print_usage_hint() {
   [[ "$enable_ssl" == "y" ]] && base="https://${domain}"
 
   echo
-  echo "================ 通用反代使用方法 ================"
-  echo "在 Emby 客户端「服务器地址」填："
-  echo "  ${base}/<源站域名或IP:端口>"
-  echo "  （默认按 https 回源）"
+  echo "================ éç¨åä»£ä½¿ç¨æ¹æ³ ================"
+  echo "å¨ Emby å®¢æ·ç«¯ãæå¡å¨å°åãå¡«ï¼"
+  echo "  ${base}/<æºç«ååæIP:ç«¯å£>"
+  echo "  ï¼é»è®¤æ https åæºï¼"
   echo
-  echo "也支持显式指定协议："
-  echo "  ${base}/https/<源站域名或IP:端口>"
-  echo "  ${base}/http/<源站域名或IP:端口>"
+  echo "ä¹æ¯ææ¾å¼æå®åè®®ï¼"
+  echo "  ${base}/https/<æºç«ååæIP:ç«¯å£>"
+  echo "  ${base}/http/<æºç«ååæIP:ç«¯å£>"
   echo
-  echo "例子："
+  echo "ä¾å­ï¼"
   echo "  ${base}/plus.younoyes.com:443"
   echo "  ${base}/https/plus.younoyes.com:443"
   echo "  ${base}/http/1.2.3.4:8096"
   echo
-  echo "认证："
+  echo "è®¤è¯ï¼"
   if [[ -n "$basic_user" ]]; then
-    echo "  已启用 BasicAuth：用户名 ${basic_user}"
-    echo "  密码：${basic_pass}"
+    echo "  å·²å¯ç¨ BasicAuthï¼ç¨æ·å ${basic_user}"
+    echo "  å¯ç ï¼${basic_pass}"
   else
-    echo "  ⚠️ 未启用 BasicAuth（强烈不建议公网这样跑，会变成开放代理）"
+    echo "  â ï¸ æªå¯ç¨ BasicAuthï¼å¼ºçä¸å»ºè®®å¬ç½è¿æ ·è·ï¼ä¼åæå¼æ¾ä»£çï¼"
   fi
   echo "=================================================="
   echo
@@ -401,36 +406,36 @@ action_install_or_update() {
   local ENABLE_BASICAUTH BASIC_USER BASIC_PASS
   local ENABLE_IPWL IPWL
 
-  prompt DOMAIN "你的入口域名（例如 emby.bear4f.de；只填域名，不要 https://）"
+  prompt DOMAIN "ä½ çå¥å£ååï¼ä¾å¦ emby.bear4f.deï¼åªå¡«ååï¼ä¸è¦ https://ï¼"
   DOMAIN="$(strip_scheme "$DOMAIN")"
-  [[ -n "$DOMAIN" ]] || { echo "域名不能为空"; return 1; }
+  [[ -n "$DOMAIN" ]] || { echo "ååä¸è½ä¸ºç©º"; return 1; }
 
-  yesno ENABLE_SSL "为入口域名申请 Let's Encrypt（启用 443 并 80->443）" "y"
+  yesno ENABLE_SSL "ä¸ºå¥å£ååç³è¯· Let's Encryptï¼å¯ç¨ 443 å¹¶ 80->443ï¼" "y"
   EMAIL="admin@${DOMAIN}"
-  [[ "$ENABLE_SSL" == "y" ]] && prompt EMAIL "证书邮箱" "$EMAIL"
+  [[ "$ENABLE_SSL" == "y" ]] && prompt EMAIL "è¯ä¹¦é®ç®±" "$EMAIL"
 
-  yesno ENABLE_BASICAUTH "启用 BasicAuth（强烈建议开启）" "y"
+  yesno ENABLE_BASICAUTH "å¯ç¨ BasicAuthï¼å¼ºçå»ºè®®å¼å¯ï¼" "y"
   BASIC_USER="emby"
   BASIC_PASS=""
   if [[ "$ENABLE_BASICAUTH" == "y" ]]; then
-    prompt BASIC_USER "BasicAuth 用户名" "emby"
+    prompt BASIC_USER "BasicAuth ç¨æ·å" "emby"
     BASIC_PASS="$(random_pass)"
-    prompt BASIC_PASS "BasicAuth 密码（留空将自动生成）" "$BASIC_PASS"
+    prompt BASIC_PASS "BasicAuth å¯ç ï¼çç©ºå°èªå¨çæï¼" "$BASIC_PASS"
   fi
 
-  yesno ENABLE_IPWL "启用 IP 白名单（可选，更安全）" "n"
+  yesno ENABLE_IPWL "å¯ç¨ IP ç½ååï¼å¯éï¼æ´å®å¨ï¼" "n"
   IPWL=""
   if [[ "$ENABLE_IPWL" == "y" ]]; then
-    prompt IPWL "白名单（逗号分隔，如 1.2.3.4/32,5.6.7.8/32）"
-    [[ -n "$IPWL" ]] || { echo "白名单不能为空"; return 1; }
+    prompt IPWL "ç½ååï¼éå·åéï¼å¦ 1.2.3.4/32,5.6.7.8/32ï¼"
+    [[ -n "$IPWL" ]] || { echo "ç½ååä¸è½ä¸ºç©º"; return 1; }
   fi
 
   echo
-  echo "---- 配置确认 ----"
-  echo "入口域名:    $DOMAIN"
-  echo "入口 HTTPS:  $ENABLE_SSL"
+  echo "---- éç½®ç¡®è®¤ ----"
+  echo "å¥å£åå:    $DOMAIN"
+  echo "å¥å£ HTTPS:  $ENABLE_SSL"
   echo "BasicAuth:   $ENABLE_BASICAUTH"
-  echo "IP 白名单:   $ENABLE_IPWL ${IPWL:+($IPWL)}"
+  echo "IP ç½åå:   $ENABLE_IPWL ${IPWL:+($IPWL)}"
   echo "------------------"
   echo
 
@@ -457,7 +462,7 @@ action_install_or_update() {
     local rc_cert=$?
     set -e
     if [[ $rc_cert -ne 0 ]]; then
-      echo "❌ certbot 配置失败，回滚..."
+      echo "â certbot éç½®å¤±è´¥ï¼åæ»..."
       restore_nginx "$backup"
       reload_nginx
       return 1
@@ -465,10 +470,10 @@ action_install_or_update() {
     apply_with_rollback "$backup" "$dump" || return 1
   fi
 
-  echo "✅ 已生效：$DOMAIN"
-  echo "站点配置：$(conf_path_for_domain "$DOMAIN")"
-  echo "MAP 配置：$MAP_CONF"
-  echo "备份目录：$backup"
+  echo "â å·²çæï¼$DOMAIN"
+  echo "ç«ç¹éç½®ï¼$(conf_path_for_domain "$DOMAIN")"
+  echo "MAP éç½®ï¼$MAP_CONF"
+  echo "å¤ä»½ç®å½ï¼$backup"
   echo
 
   if [[ "$ENABLE_BASICAUTH" == "y" ]]; then
@@ -477,60 +482,60 @@ action_install_or_update() {
     print_usage_hint "$DOMAIN" "$ENABLE_SSL" "" ""
   fi
 
-  echo "提示："
-  echo "  - 这是“通用网关反代”，务必开启 BasicAuth 或 IP 白名单，否则等于开放代理。"
-  echo "  - 回源默认 https；如果源站是 http，请用 /http/<host:port>。"
+  echo "æç¤ºï¼"
+  echo "  - è¿æ¯âéç¨ç½å³åä»£âï¼å¡å¿å¼å¯ BasicAuth æ IP ç½ååï¼å¦åç­äºå¼æ¾ä»£çã"
+  echo "  - åæºé»è®¤ httpsï¼å¦ææºç«æ¯ httpï¼è¯·ç¨ /http/<host:port>ã"
 }
 
 action_status() {
-  echo "=== ${TOOL_NAME} 状态 ==="
-  ls -l "${SITES_AVAIL}/${CONF_PREFIX}"*.conf 2>/dev/null || echo "（未找到站点配置）"
+  echo "=== ${TOOL_NAME} ç¶æ ==="
+  ls -l "${SITES_AVAIL}/${CONF_PREFIX}"*.conf 2>/dev/null || echo "ï¼æªæ¾å°ç«ç¹éç½®ï¼"
   echo
-  echo "nginx -t："
+  echo "nginx -tï¼"
   nginx -t || true
   echo
-  echo "nginx 状态："
+  echo "nginx ç¶æï¼"
   systemctl status nginx --no-pager || true
   echo
   if [[ -f "$MAP_CONF" ]]; then
-    echo "MAP 配置：$MAP_CONF（存在）"
+    echo "MAP éç½®ï¼$MAP_CONFï¼å­å¨ï¼"
   else
-    echo "MAP 配置：$MAP_CONF（不存在）"
+    echo "MAP éç½®ï¼$MAP_CONFï¼ä¸å­å¨ï¼"
   fi
 }
 
 action_change_auth() {
   local user pass
   if [[ ! -f "$HTPASSWD_PATH" ]]; then
-    echo "未找到 $HTPASSWD_PATH。先在“安装/更新”里启用 BasicAuth。"
+    echo "æªæ¾å° $HTPASSWD_PATHãåå¨âå®è£/æ´æ°âéå¯ç¨ BasicAuthã"
     return 1
   fi
-  prompt user "新 BasicAuth 用户名" "emby"
+  prompt user "æ° BasicAuth ç¨æ·å" "emby"
   pass="$(random_pass)"
-  prompt pass "新 BasicAuth 密码（留空将自动生成）" "$pass"
+  prompt pass "æ° BasicAuth å¯ç ï¼çç©ºå°èªå¨çæï¼" "$pass"
   htpasswd -bc "$HTPASSWD_PATH" "$user" "$pass" >/dev/null
   reload_nginx
-  echo "✅ 已更新 BasicAuth：$user / $pass"
+  echo "â å·²æ´æ° BasicAuthï¼$user / $pass"
 }
 
 action_uninstall() {
   local DOMAIN
-  prompt DOMAIN "要卸载的入口域名（例如 emby.bear4f.de）"
+  prompt DOMAIN "è¦å¸è½½çå¥å£ååï¼ä¾å¦ emby.bear4f.deï¼"
   DOMAIN="$(strip_scheme "$DOMAIN")"
   local conf enabled
   conf="$(conf_path_for_domain "$DOMAIN")"
   enabled="$(enabled_path_for_domain "$DOMAIN")"
 
-  echo "将删除："
+  echo "å°å é¤ï¼"
   echo "  - $conf"
   echo "  - $enabled"
   echo "  - /etc/nginx/snippets/emby-gw-locations.conf"
   echo "  - $MAP_CONF"
-  echo "  - $HTPASSWD_PATH（如存在）"
+  echo "  - $HTPASSWD_PATHï¼å¦å­å¨ï¼"
   echo
 
-  yesno OK "确认执行（不可逆）" "n"
-  [[ "$OK" == "y" ]] || { echo "已取消"; return 0; }
+  yesno OK "ç¡®è®¤æ§è¡ï¼ä¸å¯éï¼" "n"
+  [[ "$OK" == "y" ]] || { echo "å·²åæ¶"; return 0; }
 
   ensure_deps
   local backup dump
@@ -541,37 +546,38 @@ action_uninstall() {
   rm -f "$enabled" "$conf" "$MAP_CONF" "$HTPASSWD_PATH" /etc/nginx/snippets/emby-gw-locations.conf 2>/dev/null || true
 
   apply_with_rollback "$backup" "$dump" || true
-  echo "✅ 已卸载（不卸载 nginx/certbot）。备份目录：$backup"
-  echo "证书如需删除请手动执行：certbot delete --cert-name $DOMAIN"
+  echo "â å·²å¸è½½ï¼ä¸å¸è½½ nginx/certbotï¼ãå¤ä»½ç®å½ï¼$backup"
+  echo "è¯ä¹¦å¦éå é¤è¯·æå¨æ§è¡ï¼certbot delete --cert-name $DOMAIN"
 }
 
 menu() {
   IFS="|" read -r OS_NAME OS_VER OS_CODE < <(os_info)
-  echo "=== ${TOOL_NAME}（通用反代网关）==="
-  echo "系统识别：${OS_NAME} / ${OS_VER} / ${OS_CODE}"
-  echo "用途：让 Emby 客户端直接填 https://你的域名/源站:端口 来观看（走你 VPS 流量）。"
-  echo "安全：务必开启 BasicAuth 或 IP 白名单。"
+  echo "=== ${TOOL_NAME}ï¼éç¨åä»£ç½å³ï¼==="
+  echo "ç³»ç»è¯å«ï¼${OS_NAME} / ${OS_VER} / ${OS_CODE}"
+  echo "ç¨éï¼è®© Emby å®¢æ·ç«¯ç´æ¥å¡« https://ä½ çåå/æºç«:ç«¯å£ æ¥è§çï¼èµ°ä½  VPS æµéï¼ã"
+  echo "å®å¨ï¼å¡å¿å¼å¯ BasicAuth æ IP ç½ååã"
   echo
 
   while true; do
-    echo "========== 菜单 =========="
-    echo "1) 安装/更新 通用反代网关"
-    echo "2) 查看状态"
-    echo "3) 修改 BasicAuth 账号/密码"
-    echo "4) 卸载"
-    echo "0) 退出"
+    echo "========== èå =========="
+    echo "1) å®è£/æ´æ° éç¨åä»£ç½å³"
+    echo "2) æ¥çç¶æ"
+    echo "3) ä¿®æ¹ BasicAuth è´¦å·/å¯ç "
+    echo "4) å¸è½½"
+    echo "0) éåº"
     echo "=========================="
-    read -r -p "请选择: " c
+    read -r -p "è¯·éæ©: " c
     case "$c" in
       1) action_install_or_update ;;
       2) action_status ;;
       3) action_change_auth ;;
       4) action_uninstall ;;
       0) exit 0 ;;
-      *) echo "无效选项" ;;
+      *) echo "æ æéé¡¹" ;;
     esac
   done
 }
 
 need_root
 menu
+
